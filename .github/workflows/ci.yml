@@ -1,0 +1,97 @@
+# CI/CD pipeline - runs on every push and pull request.
+#
+#   1. test      -> lint, train the model, run all tests (model quality gate included)
+#   2. security  -> Bandit (code), pip-audit (dependencies), Gitleaks (secrets)
+#   3. docker    -> build image, scan it with Trivy, push to GitHub Container Registry (main branch only)
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint, train & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Run training pipeline
+        run: python -m src.pipeline
+      - name: Run tests with coverage
+        run: pytest -v --cov=src --cov=api --cov-report=term-missing
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-reports
+          path: |
+            reports/
+            models/model_metadata.json
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0              # full history so Gitleaks can scan every commit
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install tools
+        run: pip install bandit pip-audit
+      - name: SAST - Bandit (fails on medium/high issues)
+        run: bandit -r src api scripts run.py -ll
+      - name: Dependency vulnerabilities - pip-audit
+        run: pip-audit -r requirements.txt
+        continue-on-error: true       # report only: new CVEs in libraries shouldn't block a student project
+      - name: Secret scanning - Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Build, scan & push image
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t pm-api:ci .
+      - name: Container scan - Trivy
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest \
+            image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 pm-api:ci
+      - name: Smoke test container
+        run: |
+          docker run -d --name smoke -p 8000:8000 pm-api:ci
+          for i in $(seq 1 20); do curl -sf http://localhost:8000/health && break; sleep 3; done
+          curl -sf -X POST http://localhost:8000/predict -H "Content-Type: application/json" \
+            -d '{"machine_type":"M","air_temperature_k":298.1,"process_temperature_k":308.6,"rotational_speed_rpm":1551,"torque_nm":42.8,"tool_wear_min":108}'
+          docker rm -f smoke
+      - name: Push to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          IMAGE=ghcr.io/$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')/predictive-maintenance
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag pm-api:ci $IMAGE:latest
+          docker tag pm-api:ci $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}

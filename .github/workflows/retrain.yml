@@ -1,0 +1,40 @@
+# Scheduled retraining - runs every Monday 02:00 UTC, or manually from the Actions tab.
+# Checks new production data for drift and retrains + promotes a new model if needed.
+# (Here the "new production data" is simulated. In a real plant this job would read
+#  the latest sensor data from a database / data lake.)
+
+name: Scheduled retraining
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Train current production model
+        run: python -m src.pipeline
+      - name: Collect new production data (simulated with drift)
+        run: python -m src.data_generation --drift --n 3000
+      - name: Drift check + retrain if needed
+        run: python -m src.retrain
+      - name: Upload retraining results
+        uses: actions/upload-artifact@v4
+        with:
+          name: retraining-results
+          path: |
+            reports/drift_report.json
+            reports/retraining_result.json
+            models/
+            logs/alerts.jsonl

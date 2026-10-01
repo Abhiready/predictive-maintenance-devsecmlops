@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Start app (opens browser)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/run.py",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "1. Train pipeline",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "src.pipeline",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "2. Run API (uvicorn)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "api.main:app",
+        "--port",
+        "8000"
+      ],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "3. Real-time simulator",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.simulate_stream",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
