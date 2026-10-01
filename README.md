@@ -38,6 +38,42 @@ flowchart LR
     I --> AL
 ```
 
+## Screenshots
+
+**Overview:** model quality, model comparison and failure drivers
+![Overview](docs/images/app-overview.png)
+
+**Check a machine:** live health gauge, risk level, recommended action and main risk drivers
+![Check a machine](docs/images/app-check.png)
+
+**Plant floor:** simulated machines streaming sensor data in real time, with automatic predictive maintenance
+![Plant floor](docs/images/app-floor.png)
+
+**Drift & retraining:** per-sensor drift detection and champion vs challenger retraining
+![Drift and retraining](docs/images/app-drift.png)
+
+**Batch scoring on the real AI4I 2020 dataset**
+![Batch scoring](docs/images/app-batch.png)
+
+**Model registry:** every model version in MLflow, with the serving champion
+![Model registry](docs/images/app-registry.png)
+
+**Data & EDA:** dataset statistics and validation checks
+![Data and EDA](docs/images/app-data.png)
+
+**Alerts & logs:** critical machines, drift and retraining alerts, recent predictions
+![Alerts and logs](docs/images/app-alerts.png)
+
+### EDA and evaluation
+| Class balance | Failure rate by machine type |
+|---|---|
+| ![Class balance](docs/images/class_balance.png) | ![Failure rate by type](docs/images/failure_by_type.png) |
+| **Correlation heatmap** | **Confusion matrix (test set)** |
+| ![Correlation heatmap](docs/images/correlation_heatmap.png) | ![Confusion matrix](docs/images/confusion_matrix.png) |
+
+**Sensor distributions, normal vs failing machines**
+![Sensor distributions](docs/images/sensor_distributions.png)
+
 ## 3. Tech stack
 
 | Area | Tool |
@@ -82,6 +118,7 @@ predictive-maintenance/
 │   └── batch_predict.py        # offline batch scoring of a CSV
 ├── tests/                      # 28 tests: data, model, drift, API, web app, security
 ├── monitoring/                 # Prometheus config + alert rules, Grafana dashboard
+├── docs/images/                # screenshots and charts used in this README
 ├── k8s/deployment.yaml         # Kubernetes deployment + service
 ├── .github/workflows/          # ci.yml (CI/CD) + retrain.yml (weekly retraining)
 ├── Dockerfile, docker-compose.yml
@@ -121,8 +158,8 @@ Everything runs from the browser. No more terminal commands are needed.
 |---|---|
 | **Overview** | Model quality (F1, recall, ROC-AUC), model comparison chart, failure drivers, prediction mix, last drift check and retraining |
 | **Check a machine** | Move sensor sliders or pick a scenario (healthy, worn tool, poor cooling, overloaded, power spike) and see the health gauge, risk level, action, urgency and main risk drivers update instantly |
-| **Plant floor (live)** | Start a production line of simulated machines streaming readings in real time. Tools wear out, health falls, risk rises; click **Service machine** to reset one. Toggle harsh conditions to cause drift |
-| **Batch scoring** | Score 500 machines at once or upload your own CSV; see risk mix, accuracy against actual outcomes, riskiest machines, and download the results |
+| **Plant floor (live)** | Start a production line of simulated machines streaming readings in real time. Tools wear out, health falls and risk rises. With **auto-maintenance** on, a machine at high risk gets a crew dispatched and is serviced before it breaks down, restoring its health. Fleet stats show average health, maintenance jobs and critical alerts. Toggle **harsh conditions** to cause drift, or untick auto-maintenance to see what happens without it |
+| **Batch scoring** | Score 500 machines at once or upload a CSV, including the original AI4I 2020 dataset from UCI or Kaggle as-is; see risk mix, accuracy against actual outcomes, riskiest machines, and download the results |
 | **Drift & retraining** | Run a drift check (PSI + KS per sensor, prediction drift), then retrain with a live log; the new model is promoted only if it is at least as good |
 | **Model registry** | All MLflow model versions, which one is champion, metrics and tuned hyperparameters; link to the MLflow UI |
 | **Data & EDA** | Dataset stats, validation checks, EDA charts and the confusion matrix |
@@ -249,6 +286,23 @@ accuracy and is useless).
 Exact numbers for your run are in `reports/model_comparison.json`, `reports/classification_report.txt`
 and MLflow.
 
+### Validation on real data
+
+The model was trained only on synthetic data, then tested on the real
+**AI4I 2020 Predictive Maintenance dataset** (10,000 machines, 339 real failures),
+which it had never seen:
+
+| Metric | Synthetic test set | Real AI4I 2020 data |
+|---|---|---|
+| F1 | ~0.73 | ~0.64 |
+| Recall (failures caught) | ~69% | 60% (202 of 339) |
+| Precision | ~77% | ~68% |
+
+Accuracy on the real data was 97.7%, but only 3.4% of those machines failed, so a model that
+always predicts "no failure" would already score 96.6%. Recall and F1 are the meaningful numbers.
+The result shows the synthetic data captures real failure behaviour. The most common risk driver
+on real data, tool wear × torque, matches the overstrain failure mode documented for the dataset.
+
 ## 11. Business outputs
 
 | Failure probability | Risk level | Action | Urgency |
@@ -270,6 +324,15 @@ dashboard. `monitoring/alert_rules.yml` defines alerts: API down, error rate > 5
 > 500 ms, spike in CRITICAL machines.
 
 **Model monitoring:** every prediction is logged to `logs/prediction_log.csv`.
+
+**Live alarms (plant floor):** the risk level is based on a rolling average of the last 3
+predictions per machine. Alarms escalate immediately but only clear after two readings in a row,
+so a single noisy sensor reading can't trigger or clear an alarm. Critical-risk alerts are
+de-duplicated per machine (at most one every 2 minutes).
+
+**Predictive maintenance loop:** when a machine reaches HIGH risk, a maintenance crew is
+dispatched automatically and the machine is serviced before it fails; CRITICAL machines get
+emergency maintenance on the next reading.
 
 **Sensor drift:** per feature, PSI (> 0.2 = drift) and KS test. Dataset drift if > 30% of features
 drift.
@@ -317,7 +380,7 @@ git init
 git add .
 git commit -m "Predictive maintenance DevSecMLOps project"
 git branch -M main
-git remote add origin https://github.com/<your-username>/predictive-maintenance.git
+git remote add origin https://github.com/Abhiready/predictive-maintenance-devsecmlops.git
 git push -u origin main
 ```
 Then open the **Actions** tab to watch the pipeline. The retraining workflow can be started
